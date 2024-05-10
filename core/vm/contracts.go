@@ -17,25 +17,29 @@
 package vm
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/big"
 
-	"github.com/consensys/gnark-crypto/ecc"
-	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"log"
+	"os"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/blake2b"
+	"github.com/ethereum/go-ethereum/crypto/bls12381"
 	"github.com/ethereum/go-ethereum/crypto/bn256"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/google/generative-ai-go/genai"
+	"github.com/joho/godotenv"
 	"golang.org/x/crypto/ripemd160"
+	"google.golang.org/api/option"
 )
 
 // PrecompiledContract is the basic interface for native Go contracts. The implementation
@@ -94,6 +98,7 @@ var PrecompiledContractsBerlin = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x7}): &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{0x8}): &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{0x9}): &blake2F{},
+	common.BytesToAddress([]byte{0x0a}): &askgemini{},
 }
 
 // PrecompiledContractsCancun contains the default set of pre-compiled Ethereum
@@ -1223,4 +1228,56 @@ func kZGToVersionedHash(kzg kzg4844.Commitment) common.Hash {
 	h[0] = blobCommitmentVersionKZG
 
 	return h
+}
+
+// -------------------------------------------------------------------------------
+type askgemini struct{}
+
+// RequiredGas returns the gas required to execute the pre-compiled contract.
+func (c *askgemini) RequiredGas(input []byte) uint64 {
+	// You can adjust gas calculation as needed
+	return uint64(len(input)+31)/32*100 + 1000
+}
+
+// Run copies the input string and returns it.
+func (c *askgemini) Run(input []byte) ([]byte, error) {
+	godotenv.Load()
+	var result string
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv("GEMINI_API_KEY")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+
+	model := client.GenerativeModel("gemini-1.0-pro")
+	resp, err := model.GenerateContent(ctx, genai.Text(string(input)))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	result = printResponse(resp)
+	byteArray := []byte(result)
+
+	return byteArray, err
+
+	// fmt.Println(byteArray)
+	// return output, nil
+	// fmt.Println(resp.Candidates.Content)
+
+}
+
+func printResponse(resp *genai.GenerateContentResponse) string {
+	var output string
+	for _, cand := range resp.Candidates {
+
+		if cand.Content != nil {
+			for _, part := range cand.Content.Parts {
+				output += fmt.Sprintln(part)
+			}
+		}
+	}
+	fmt.Println("---")
+	// fmt.Println(output)
+	return output
 }
